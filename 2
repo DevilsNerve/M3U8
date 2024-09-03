@@ -1,0 +1,90 @@
+
+var token = ''; // Initialize the token variable
+
+// Function to refresh the token periodically
+function refreshToken() {
+    return fetch('/refresh-token', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.token) {
+            token = data.token;
+            console.log("Token refreshed successfully.");
+        } else {
+            throw new Error("Token refresh failed, unauthorized access.");
+        }
+    })
+    .catch(error => {
+        console.log("Error refreshing token: ", error);
+    });
+}
+
+async function downloadAndConcatTSFiles(url) {
+    try {
+        // Ensure the token is available before proceeding
+        if (!token) {
+            await refreshToken();
+        }
+
+        // Fetch the playlist
+        const playlistResponse = await fetch(url, {
+            headers: {
+                'Authorization': 'Bearer ' + token,  // Use the current token
+                'Content-Type': 'application/x-mpegURL'
+            }
+        });
+
+        if (!playlistResponse.ok) {
+            throw new Error(`Failed to fetch playlist: ${playlistResponse.status}`);
+        }
+
+        const playlistText = await playlistResponse.text();
+        const tsFiles = playlistText.match(/(.*\.ts)/g); // Regex to extract .ts file URLs
+
+        if (!tsFiles || tsFiles.length === 0) {
+            throw new Error("No .ts files found in playlist.");
+        }
+
+        // Download each .ts file
+        const tsBlobs = [];
+        for (const tsFile of tsFiles) {
+            const tsUrl = new URL(tsFile, url).href;
+            const tsResponse = await fetch(tsUrl, {
+                headers: {
+                    'Authorization': 'Bearer ' + token  // Use the current token
+                }
+            });
+
+            if (!tsResponse.ok) {
+                throw new Error(`Failed to fetch .ts file: ${tsResponse.status}`);
+            }
+
+            const tsBlob = await tsResponse.blob();
+            tsBlobs.push(tsBlob);
+        }
+
+        // Concatenate the .ts files into a single Blob
+        const combinedBlob = new Blob(tsBlobs, { type: 'video/mp4' });
+
+        // Trigger a download of the concatenated video
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(combinedBlob);
+        a.download = 'video.mp4';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+    } catch (error) {
+        console.error('Error downloading video:', error);
+    }
+}
+
+// Trigger the download
+downloadAndConcatTSFiles('http://10.20.67.159:8086/video/playlist.m3u8');
+
+// Periodically refresh the token and ensure the latest token is used
+setInterval(refreshToken, 240000);  // Refresh every 4 minutes
